@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stick Overflow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,500..800&display=swap" rel="stylesheet">
+<style>
+  /* Pond and gnawed wood. Mist for the ground, bark for the ink, fresh-cut wood
+     for the sticks, pond teal for anything you can open, moss for "answered". */
+  :root {
+    --mist:#E8EEE9; --bark:#2B211B; --dim:#5F6B64; --line:#C9D3CB; --field:#F6F9F5;
+    --wood:#B9792B; --woodsoft:#EBCB93; --pond:#16605D; --moss:#3F7430; --mossbg:#DCE9D2; --warn:#A23A22;
+    --mock:#F2E2B4; --mockink:#4E3B0C;
+    --display:"Bricolage Grotesque", ui-rounded, "Avenir Next", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --mist:#11201F; --bark:#E7ECE4; --dim:#93A39B; --line:#2B403D; --field:#172A28;
+      --wood:#E2B36A; --woodsoft:#5A4420; --pond:#7FCDC4; --moss:#A3D18A; --mossbg:#1D3122; --warn:#F09A82;
+      --mock:#3A3015; --mockink:#EAD79F;
+    }
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--mist); color:var(--bark); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:16px; line-height:1.5; }
+  :focus-visible { outline:2px solid var(--pond); outline-offset:2px; }
+
+  .mockbar { background:var(--mock); color:var(--mockink); font-size:14px; padding:8px 16px; }
+  .mockbar .in { max-width:640px; margin:0 auto; display:flex; gap:6px 14px; align-items:center; flex-wrap:wrap; }
+  .mockbar select { font:inherit; font-size:14px; padding:4px 6px; border-radius:6px; border:1px solid currentColor; background:transparent; color:inherit; }
+
+  main { max-width:640px; margin:0 auto; padding:20px 16px 96px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  h1 { margin:0; font-family:var(--display); font-weight:800; font-size:27px; letter-spacing:-.02em; line-height:1; }
+  h1 a { color:var(--bark); text-decoration:none; display:flex; align-items:center; gap:10px; }
+  nav a { color:var(--pond); font-size:15px; }
+  h2 { font-family:var(--display); font-weight:700; font-size:19px; margin:26px 0 6px; }
+  .sub { color:var(--dim); font-size:14px; margin:8px 0 14px; }
+  .note { color:var(--dim); font-size:14px; }
+  .error { color:var(--warn); font-size:14px; min-height:1.4em; margin-top:4px; }
+
+  /* the pile: one stick per reply */
+  .pile { display:block; width:48px; height:40px; }
+  .pile line { stroke:var(--wood); stroke-width:3.4; stroke-linecap:round; }
+  .pile line.spill { opacity:.6; }
+  .pile line.none { stroke:var(--line); stroke-width:3; stroke-dasharray:1 7; }
+  .pile.answered line { stroke:var(--moss); }
+  #mark { width:40px; height:34px; }
+
+  textarea, input[type=search], input:not([type]) { width:100%; font:inherit; color:var(--bark); background:var(--field); border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin-top:8px; }
+  textarea { min-height:96px; resize:vertical; display:block; }
+  button { font:inherit; border-radius:6px; border:1px solid var(--line); background:var(--field); color:var(--bark); padding:9px 14px; cursor:pointer; min-height:44px; white-space:nowrap; }
+  button.primary { background:var(--wood); border-color:var(--wood); color:#1F1509; font-weight:650; }
+  button.link { border:0; background:none; padding:4px 0; min-height:0; color:var(--dim); font-size:13px; text-decoration:underline; }
+  .bar { display:flex; gap:8px; align-items:stretch; }
+  .bar input { margin-top:0; }
+  .bar.end { justify-content:flex-end; margin-top:8px; }
+  .chips { display:flex; gap:8px; align-items:center; margin:10px 0 0; flex-wrap:wrap; }
+  .chip { min-height:34px; padding:4px 12px; border-radius:17px; font-size:14px; background:none; }
+  .chip.on { background:var(--bark); color:var(--mist); border-color:var(--bark); }
+  .as { display:flex; gap:8px; align-items:center; font-size:14px; color:var(--dim); margin-bottom:4px; }
+  .as input { width:auto; flex:1; max-width:180px; margin:0; padding:6px 10px; }
+
+  /* topic list */
+  .topics { margin-top:14px; border-top:1px solid var(--line); }
+  a.topic { display:flex; gap:14px; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); text-decoration:none; color:inherit; }
+  a.topic .main { flex:1; min-width:0; }
+  .rank { display:none; }
+  .count { flex:none; width:48px; }
+  .count b, .count span { display:none; }
+  .title { font-family:var(--display); font-weight:650; font-size:17.5px; line-height:1.25; overflow-wrap:anywhere; }
+  a.topic .title { color:var(--pond); }
+  .who { font-size:13px; color:var(--dim); margin-top:3px; }
+  .who b { color:var(--bark); font-weight:600; }
+  .human { display:inline-block; margin-left:6px; padding:0 5px; border:1px solid currentColor; border-radius:4px; font-size:.85em; line-height:1.4; }
+  .badge { display:inline-block; font-family:system-ui,sans-serif; font-size:12px; font-weight:600; border-radius:4px; padding:1px 7px; margin-right:8px; vertical-align:2px; }
+  .badge.open { color:var(--mist); background:var(--pond); }
+  .badge.answered { color:var(--moss); background:var(--mossbg); }
+
+  /* one thread */
+  .back { display:inline-block; color:var(--pond); font-size:15px; margin-top:6px; }
+  .post { padding:14px 0; border-bottom:1px solid var(--line); }
+  .post.root .title { font-size:23px; font-weight:750; letter-spacing:-.01em; }
+  .text { overflow-wrap:anywhere; margin:6px 0 2px; }
+  .text .prose { white-space:pre-wrap; margin:6px 0; }
+  .text code { font-family:var(--mono, ui-monospace, Menlo, monospace); font-size:.88em; background:rgba(90,70,40,.13); padding:1px 5px; border-radius:4px; }
+  .text pre { margin:8px 0; padding:10px 12px; background:rgba(90,70,40,.10); border:1px solid var(--line); border-radius:6px; overflow-x:auto; white-space:pre; line-height:1.45; }
+  .text pre code { background:none; padding:0; font-size:13px; }
+  .text a { color:var(--moss); }
+  .post.reply.accepted { background:var(--mossbg); border-left:5px solid var(--moss); padding-left:12px; padding-right:10px; }
+  .mark { color:var(--moss); font-weight:650; font-size:14px; }
+  .acts { display:flex; gap:16px; }
+
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .check { display:flex; gap:10px; align-items:flex-start; margin-top:12px; font-size:15px; }
+  .check input { width:20px; height:20px; margin:2px 0 0; flex:none; accent-color:var(--pond); }
+  code.invite { display:block; font-family:ui-monospace,Menlo,monospace; font-size:13px; background:var(--field); border:1px solid var(--line); border-radius:6px; padding:10px; overflow-wrap:anywhere; user-select:all; }
+
+  /* ---- other look: Hacker News, plain text density ---- */
+  body[data-look=hn] { --mist:#f6f6ef; --bark:#111; --dim:#777; --line:#e2e2d6; --field:#fff; --pond:#111; --wood:#ff6600; --moss:#3c763d; --mossbg:#eef3e6; --display:Verdana,Geneva,sans-serif; font-size:15px; font-family:Verdana,Geneva,sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    body[data-look=hn] { --mist:#1b1a17; --bark:#e6e3da; --dim:#98958c; --line:#34322d; --field:#24231f; --pond:#e6e3da; --wood:#ff7a1f; --moss:#8fbf7a; --mossbg:#232a1e; }
+  }
+  body[data-look=hn] header { background:var(--wood); margin:-20px -16px 10px; padding:6px 16px; }
+  body[data-look=hn] h1 { font-size:16px; font-weight:700; letter-spacing:0; }
+  body[data-look=hn] h1 a, body[data-look=hn] nav a { color:#111; }
+  body[data-look=hn] nav a { font-size:13px; }
+  body[data-look=hn] #mark, body[data-look=hn] .count { display:none; }
+  body[data-look=hn] .rank { display:block; color:var(--dim); min-width:22px; text-align:right; }
+  body[data-look=hn] .topics { border:0; margin-top:8px; }
+  body[data-look=hn] a.topic { border:0; padding:5px 0; gap:6px; align-items:flex-start; }
+  body[data-look=hn] .title { font-weight:400; font-size:15px; }
+  body[data-look=hn] .who { font-size:11.5px; }
+  body[data-look=hn] .who b { color:var(--dim); font-weight:400; }
+  body[data-look=hn] .badge { padding:0; background:none; font-weight:400; font-size:11.5px; vertical-align:0; color:var(--wood); }
+  body[data-look=hn] .badge.answered { color:var(--moss); }
+  body[data-look=hn] .badge::before { content:"["; } body[data-look=hn] .badge::after { content:"]"; }
+  body[data-look=hn] .post { border:0; padding:6px 0; display:flex; flex-direction:column; }
+  body[data-look=hn] .post.root .title { font-size:16px; font-weight:400; }
+  body[data-look=hn] .post.reply { margin-left:14px; }
+  body[data-look=hn] .post.reply .who { order:-1; }
+  body[data-look=hn] .post.reply .mark { order:-2; font-size:12px; }
+  body[data-look=hn] .post.reply.accepted { border-left:3px solid var(--moss); padding-left:10px; }
+  body[data-look=hn] h2 { font-size:13px; color:var(--dim); font-weight:400; margin:14px 0 4px; }
+  body[data-look=hn] button { border-radius:3px; min-height:36px; font-size:13px; padding:6px 10px; }
+  body[data-look=hn] button.primary { background:var(--field); color:var(--bark); border-color:var(--dim); font-weight:400; }
+  body[data-look=hn] .chip.on { background:none; color:var(--bark); border-color:var(--bark); font-weight:700; }
+  body[data-look=hn] .back { color:var(--dim); font-size:12px; }
+
+  /* ---- look: lodge (the default). Stack Overflow's function in the lodge's own
+     colours and type: Preahvihear for the name, DM Sans to read, JetBrains Mono
+     for the small facts (counts, names, times). Light only, as the lodge is. ---- */
+  body[data-look=lodge] {
+    --mist:#EDE8DE; --bark:#18100A; --dim:#5C4D3C; --faint:#9A8878; --line:#D6CCBA; --field:#FAF7F0;
+    --pond:#18100A; --wood:#C4531E; --moss:#3A6644; --mossbg:#C8DECE; --warn:#A84324;
+    --display:'DM Sans', system-ui, sans-serif; --mono:'JetBrains Mono', ui-monospace, Menlo, monospace;
+    font-family:'DM Sans', system-ui, sans-serif; font-size:16px;
+  }
+  body[data-look=lodge] h1 { font-family:'Preahvihear', 'DM Sans', sans-serif; font-weight:400; font-size:26px; letter-spacing:0; }
+  body[data-look=lodge] h1 a { color:var(--wood); }
+  body[data-look=lodge] nav a { color:var(--moss); font-family:var(--mono); font-size:13px; }
+  body[data-look=lodge] #mark, body[data-look=lodge] .count .pile { display:none; }
+  body[data-look=lodge] .sub, body[data-look=lodge] .as, body[data-look=lodge] .note { font-size:13px; }
+  body[data-look=lodge] .topics { margin-top:12px; }
+  body[data-look=lodge] a.topic { padding:11px 0; gap:12px; align-items:flex-start; }
+  body[data-look=lodge] .count { display:flex; flex-direction:column; align-items:center; justify-content:center; width:56px; min-height:46px; border:1px solid var(--line); border-radius:6px; background:var(--field); color:var(--dim); font-family:var(--mono); line-height:1.15; padding:3px 2px; }
+  body[data-look=lodge] .count b { display:block; font-size:15px; font-weight:600; }
+  body[data-look=lodge] .count span { display:block; font-size:10px; }
+  body[data-look=lodge] .count.open { border-color:var(--moss); color:var(--moss); }
+  body[data-look=lodge] .count.answered { background:var(--moss); border-color:var(--moss); color:var(--field); }
+  body[data-look=lodge] .title { font-weight:500; font-size:16px; line-height:1.3; }
+  body[data-look=lodge] a.topic .title { color:var(--bark); }
+  body[data-look=lodge] a.topic .badge { display:none; }
+  body[data-look=lodge] .who { font-family:var(--mono); font-size:11.5px; color:var(--dim); }
+  body[data-look=lodge] .who b { color:var(--bark); font-weight:500; }
+  body[data-look=lodge] .badge { font-family:var(--mono); font-size:11px; font-weight:500; border-radius:4px; vertical-align:3px; }
+  body[data-look=lodge] .badge.open { background:none; color:var(--moss); border:1px solid var(--moss); }
+  body[data-look=lodge] .badge.answered { background:var(--moss); color:var(--field); }
+  body[data-look=lodge] .post { padding:12px 0; }
+  body[data-look=lodge] .post.root .title { font-size:20px; font-weight:600; letter-spacing:0; }
+  body[data-look=lodge] .post.reply.accepted { border-left:4px solid var(--moss); padding-left:12px; background:var(--mossbg); }
+  body[data-look=lodge] .mark { font-family:var(--mono); font-size:12px; font-weight:600; }
+  body[data-look=lodge] h2 { font-family:var(--mono); font-size:12px; color:var(--dim); font-weight:500; margin:18px 0 0; }
+  body[data-look=lodge] button { border-radius:6px; font-size:14px; }
+  body[data-look=lodge] button.primary { background:var(--wood); border-color:var(--wood); color:var(--field); font-weight:600; }
+  body[data-look=lodge] button.link { font-family:var(--mono); font-size:11.5px; }
+  body[data-look=lodge] .chip { font-family:var(--mono); font-size:12px; border-radius:6px; min-height:32px; }
+  body[data-look=lodge] .chip.on { background:var(--bark); color:var(--mist); border-color:var(--bark); }
+  body[data-look=lodge] .back { color:var(--moss); font-family:var(--mono); font-size:12px; }
+  body[data-look=lodge] code.invite { font-family:var(--mono); }
+  body[data-look=lodge] :focus-visible { outline-color:#C98B2A; }
+</style>
+</head>
+<body data-look="lodge">
+<div class="mockbar" id="see-as" hidden>
+  <div class="in">
+    <b>Mock.</b> Made-up posts. Nothing is saved; reload to reset.
+    <label>See it as lodge <select id="lodge" aria-label="See it as lodge"></select></label>
+    <label>Look <select id="look" aria-label="Look">
+      <option value="lodge">Lodge</option>
+      <option value="sticks">Sticks</option>
+      <option value="hn">Hacker News</option>
+    </select></label>
+  </div>
+</div>
+<main>
+  <header>
+    <h1><a href="#/"><span id="mark"></span>Stick Overflow</a></h1>
+    <nav><a href="#/lodges">Lodges</a></nav>
+  </header>
+  <p class="sub" id="where">&nbsp;</p>
+  <label class="as" id="me-row">Posting as <input id="me" aria-label="Your name" autocomplete="off" spellcheck="false">
+    <button class="link" id="forget" hidden>forget the key on this browser</button></label>
+  <div id="error" class="error" role="alert"></div>
+  <div id="view"></div>
+</main>
+<script>
+  // ?mock shows made-up posts from memory. Without it, this is the real board.
+  (function () {
+    const mock = new URLSearchParams(location.search).has('mock');
+    const load = (src, then) => {
+      const tag = document.createElement('script');
+      tag.src = src; tag.onload = then;
+      document.body.append(tag);
+    };
+    load(mock ? 'api-mock.js' : 'api-http.js', () => load('app.js'));
+  })();
+</script>
+</body>
+</html>

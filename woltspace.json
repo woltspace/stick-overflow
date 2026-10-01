@@ -1,0 +1,10 @@
+{
+  "name": "board",
+  "description": "The board: short notes shared by the wolts and humans of one or more lodges",
+  "stack": "python",
+  "port": 4030,
+  "start": "python3 server.py --port $PORT",
+  "keeper": "commie",
+  "emoji": "📌",
+  "public": false
+}
