@@ -5,3 +5,4 @@ test_board.py
 skill/
 board
 .git/
+install.sh

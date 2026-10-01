@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -705,6 +706,83 @@ class SkillOnlyTest(unittest.TestCase):
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("cannot reach the shared board", done.stderr)
         self.assertIn("posted", self.board("alice", "beaver", "post", stdin="still here"))
+
+
+@unittest.skipUnless(shutil.which("git") and shutil.which("bash"), "needs git and bash")
+class InstallTest(unittest.TestCase):
+    """install.sh puts the board and the skill into a lodge's data folder. Run on a scratch one."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = pathlib.Path(self.tmp.name)
+        here = pathlib.Path(__file__).resolve().parent
+        # A stand-in for the published repo: this working tree, committed.
+        self.repo = root / "published"
+        shutil.copytree(here, self.repo, symlinks=True,
+                        ignore=shutil.ignore_patterns("data", "__pycache__", ".git"))
+        git = ["git", "-c", "user.name=test", "-c", "user.email=test@example.com"]
+        for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "x"]):
+            subprocess.run(git + cmd, cwd=self.repo, check=True, capture_output=True)
+        self.wolts = root / "lodge"
+        self.wolts.mkdir()
+
+    def install(self, *args, ok=True):
+        env = {"PATH": os.environ["PATH"], "HOME": self.tmp.name, "WOLTSPACE_WOLTS_DIR": str(self.wolts),
+               "STICK_OVERFLOW_REPO": str(self.repo), "WOLTSPACE_API": "http://127.0.0.1:9"}
+        done = subprocess.run(["bash", str(self.repo / "install.sh"), "--no-start", *args],
+                              env=env, capture_output=True, text=True, timeout=120)
+        if ok:
+            self.assertEqual(done.returncode, 0, done.stderr)
+        return done
+
+    def test_it_installs_the_board_and_the_skill_and_can_run_again(self):
+        self.install()
+        app = self.wolts / "apps" / "board"
+        skill = self.wolts / ".space" / "shared-skills" / "lodge-board"
+        self.assertTrue((app / "server.py").exists())
+        self.assertEqual(json.loads((app / "woltspace.json").read_text())["name"], "board")
+        self.assertFalse((app / "woltspace.json").read_text().count('"public": true'))
+        self.assertTrue((skill / "SKILL.md").read_text().startswith("---\nname: lodge-board"))
+        self.assertTrue(os.access(skill / "board", os.X_OK))
+        self.assertFalse((skill / "board").is_symlink())
+        self.assertFalse((app / "data").exists())
+
+        (self.repo / "NEWS.md").write_text("an update\n")
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "-A"],
+                       cwd=self.repo, check=True, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "y"],
+                       cwd=self.repo, check=True, capture_output=True)
+        self.install()
+        self.assertTrue((app / "NEWS.md").exists())
+
+        (app / "server.py").write_text("# edited in place\n")
+        (self.repo / "server.py").write_text("# changed upstream\n")
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qam", "z"],
+                       cwd=self.repo, check=True, capture_output=True)
+        blocked = self.install(ok=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn("update it by hand", blocked.stderr)
+        self.assertEqual((app / "server.py").read_text(), "# edited in place\n")
+
+    def test_no_skill_leaves_the_lodges_wolts_alone(self):
+        self.install("--no-skill")
+        self.assertTrue((self.wolts / "apps" / "board" / "server.py").exists())
+        self.assertFalse((self.wolts / ".space").exists())
+
+    def test_it_refuses_to_overwrite_something_else(self):
+        other = self.wolts / "apps" / "board"
+        other.mkdir(parents=True)
+        (other / "mine.txt").write_text("not the board")
+        done = self.install(ok=False)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("not a checkout of the board", done.stderr)
+        self.assertEqual((other / "mine.txt").read_text(), "not the board")
+
+    def test_it_needs_a_lodge(self):
+        self.wolts.rmdir()
+        done = self.install(ok=False)
+        self.assertIn("no lodge found", done.stderr)
 
 
 if __name__ == "__main__":
