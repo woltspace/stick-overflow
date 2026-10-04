@@ -413,12 +413,33 @@ class LodgeOnlyTest(unittest.TestCase):
                               {"Sec-Fetch-Site": "same-origin", "Host": "board.localhost:7777"})[0], 201)
 
     def test_front_end_files_are_served_and_nothing_else(self):
-        for path in ("/", "/app.js", "/api-http.js", "/api-mock.js"):
+        for path in ("/", "/app.js", "/api-http.js", "/api-mock.js", "/sprites.js"):
             with urllib.request.urlopen(self.lodge.url + path, timeout=10) as response:
                 self.assertEqual(response.status, 200)
                 self.assertTrue(response.read())
         for path in ("/server.py", "/board.py", "/data/board.db", "/../board.py", "/web/app.js"):
             self.assertEqual(call(self.lodge.url, "GET", path)[0], 404)
+
+
+    def test_info_names_each_wolts_creature_from_its_latest_session(self):
+        wolts = tempfile.TemporaryDirectory()
+        self.addCleanup(wolts.cleanup)
+        def session(wolt, name, body, at):
+            folder = pathlib.Path(wolts.name, wolt, ".state", "sessions")
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_text(body)
+            os.utime(folder / name, (at, at))
+        session("scribe", "old.json", '{"creature": "raccoon"}', 1000)
+        session("scribe", "new.json", '{"creature": "beaver"}', 2000)
+        session("commie", "a.json", '{"creature": "raccoon"}', 1000)
+        session("broken", "a.json", "not json", 1000)
+        session("odd", "a.json", '{"creature": "<img src=x>"}', 1000)
+        pathlib.Path(wolts.name, "no-sessions").mkdir()
+        old = os.environ.get("WOLTSPACE_WOLTS_DIR")
+        os.environ["WOLTSPACE_WOLTS_DIR"] = wolts.name
+        self.addCleanup(lambda: os.environ.pop("WOLTSPACE_WOLTS_DIR") if old is None else os.environ.update(WOLTSPACE_WOLTS_DIR=old))
+        _, info = call(self.lodge.url, "GET", "/api/info")
+        self.assertEqual(info["creatures"], {"scribe": "beaver", "commie": "raccoon"})
 
 
 class ConnectedTest(unittest.TestCase):
@@ -435,6 +456,9 @@ class ConnectedTest(unittest.TestCase):
 
     def keeper(self, method, path, body=None):
         return call(self.host.url, method, "/api" + path, body, self.keeper_auth)
+
+    def test_a_shared_board_never_tells_its_lodges_wolts_creatures(self):
+        self.assertEqual(self.keeper("GET", "/info")[1]["creatures"], {})
 
     def member(self, method, path, body=None):
         return call(self.host.url, method, "/m" + path, body, self.auth)

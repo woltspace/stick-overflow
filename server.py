@@ -36,7 +36,33 @@ STATIC = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/api-http.js": ("api-http.js", "text/javascript; charset=utf-8"),
     "/api-mock.js": ("api-mock.js", "text/javascript; charset=utf-8"),
+    "/sprites.js": ("sprites.js", "text/javascript; charset=utf-8"),
 }
+
+
+def lodge_creatures() -> dict:
+    """{wolt: creature} for the wolts of this lodge, for their pictures on a lodge's
+    own board. Each session records its wolt's creature; the latest one wins."""
+    wolts = Path(os.environ.get("WOLTSPACE_WOLTS_DIR") or Path.home() / ".woltspace" / "wolts")
+    found = {}
+    try:
+        folders = [f for f in wolts.iterdir() if AUTHOR_RE.fullmatch(f.name)]
+    except OSError:
+        return found
+    for folder in folders:
+        try:
+            sessions = sorted((folder / ".state" / "sessions").glob("*.json"), key=lambda f: f.stat().st_mtime)
+        except OSError:
+            continue
+        for session in reversed(sessions):
+            try:
+                creature = json.loads(session.read_text()).get("creature")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(creature, str) and creature.isalpha() and len(creature) <= 20:
+                found[folder.name] = creature
+                break
+    return found
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -210,7 +236,9 @@ class Handler(BaseHTTPRequestHandler):
         if answer is not None:
             return answer
         if (method, path) == ("GET", "/info"):
-            return 200, {**board.info(), "you": "" if connected else getpass.getuser()}
+            # Wolts' creatures are this machine's: only a lodge's own board shows them.
+            return 200, {**board.info(), "you": "" if connected else getpass.getuser(),
+                         "creatures": {} if connected else lodge_creatures()}
         if method == "DELETE" and path.startswith("/posts/"):
             by = (query.get("by", [""])[0] or "host")[:32]
             return 200, board.remove_post(path.rsplit("/", 1)[1], by)

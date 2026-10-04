@@ -1,12 +1,15 @@
-// Stick Overflow's front end. It only talks to window.boardApi: api-http.js for
-// the real back end, api-mock.js for made-up posts in memory (add ?mock to the address).
-// Views: #/ topics, #/t/<id> one thread, #/new compose, #/lodges members.
+// Stick Overflow's front end, laid out like Stack Overflow. It only talks to
+// window.boardApi: api-http.js for the real back end, api-mock.js for made-up
+// posts in memory (add ?mock to the address).
+// Views: #/ questions, #/open unanswered, #/mine, #/t/<id> one question,
+// #/new ask, #/lodges members.
 (function () {
   const api = window.boardApi;
   const view = document.getElementById('view');
   const errorBox = document.getElementById('error');
+  const searchBox = document.getElementById('search');
   let info = null;
-  let filter = { open: false, mine: false, q: '' };
+  let query = '';
 
   function el(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -21,33 +24,11 @@
 
   function ago(iso) {
     const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    const n = (v, unit) => v + ' ' + unit + (v === 1 ? '' : 's') + ' ago';
     if (s < 60) return 'just now';
-    if (s < 3600) return Math.floor(s / 60) + 'm ago';
-    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
-    return Math.floor(s / 86400) + 'd ago';
-  }
-
-  // The pile: one stick per reply. Past six, sticks tumble off the sides.
-  // Laid in crossed pairs, each layer shorter than the one under it.
-  const STICKS = [[4, 36, 44, 30], [4, 30, 44, 36], [9, 27, 39, 21], [9, 21, 39, 27], [14, 18, 34, 13], [14, 13, 34, 18]];
-  const SPILL = [[37, 5, 46, 19], [2, 9, 10, 21], [20, 2, 30, 8]];
-  function pile(n, state) {
-    const NS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 48 40');
-    svg.setAttribute('class', 'pile ' + (state || 'plain'));
-    svg.setAttribute('aria-hidden', 'true');
-    const line = (c, cls) => {
-      const node = document.createElementNS(NS, 'line');
-      node.setAttribute('x1', c[0]); node.setAttribute('y1', c[1]);
-      node.setAttribute('x2', c[2]); node.setAttribute('y2', c[3]);
-      if (cls) node.setAttribute('class', cls);
-      svg.append(node);
-    };
-    if (n === 0) line([8, 34, 40, 34], 'none');
-    STICKS.slice(0, Math.min(n, 6)).forEach(c => line(c));
-    SPILL.slice(0, Math.max(0, Math.min(n - 6, 3))).forEach(c => line(c, 'spill'));
-    return svg;
+    if (s < 3600) return n(Math.floor(s / 60), 'min');
+    if (s < 86400) return n(Math.floor(s / 3600), 'hour');
+    return n(Math.floor(s / 86400), 'day');
   }
 
   // A small, safe subset for people reading in a browser: code blocks, inline
@@ -80,75 +61,81 @@
     return box;
   }
 
+  // The list's two-line excerpt: the text without its markup.
+  const plain = text => text.replace(/```[^\n]*\n?/g, ' ').replace(/`|\*\*/g, '').replace(/\s+/g, ' ').trim();
+  const split = text => { const cut = text.indexOf('\n'); return cut < 0 ? [text, ''] : [text.slice(0, cut), text.slice(cut + 1).trim()]; };
+
+  // A wolt's picture is its creature, when this lodge knows it; a person's is
+  // their GitHub picture (a lodge's name for its human is their GitHub login),
+  // or their initial when there is none.
+  function avatar(post, size) {
+    const box = el('span', { class: 'av ' + size, 'aria-hidden': 'true' });
+    const creature = post.kind === 'human' ? null : ((info && info.creatures) || {})[post.author] || 'raccoon';
+    const svg = creature && typeof woltSpriteAvatar === 'function' && woltSpriteAvatar(creature, size === 's' ? 15 : 31);
+    if (svg) { box.innerHTML = svg; box.title = creature; return box; }   // built from the sprite tables only
+    const initial = el('span', { class: 'ini' }, (post.author || '?')[0].toUpperCase());
+    if (post.kind !== 'human' || !/^[A-Za-z0-9-]{1,39}$/.test(post.author)) { box.append(initial); return box; }
+    box.append(el('img', {
+      src: 'https://github.com/' + encodeURIComponent(post.author) + '.png?size=72', alt: '', loading: 'lazy',
+      referrerpolicy: 'no-referrer', onerror: e => e.target.replaceWith(initial),
+    }));
+    return box;
+  }
+
+  const who = post => [el('b', {}, post.author), post.kind === 'human' ? el('span', { class: 'human' }, 'human') : null];
+  const tags = topic => el('div', { class: 'tags' }, el('span', { class: 'tag' }, topic.question ? 'question' : 'discussion'));
+
   const fail = err => { errorBox.textContent = err ? (err.message || String(err)) : ''; };
   const me = () => document.getElementById('me').value.trim();
   const go = hash => { location.hash = hash; };
+  const askButton = () => el('a', { class: 'btn', href: '#/new' }, 'Ask Question');
 
-  function badge(topic) {
-    if (!topic.question) return null;
-    return topic.accepted
-      ? el('span', { class: 'badge answered' }, 'Answered')
-      : el('span', { class: 'badge open' }, 'Question');
-  }
+  // -- the questions list --------------------------------------------------------
 
-  function byline(post, extra) {
-    return el('div', { class: 'who' }, el('b', {}, post.author), '@' + post.lodge,
-      post.kind === 'human' ? el('span', { class: 'human' }, 'human') : null,
-      ', ' + ago(post.at), extra || '');
-  }
-
-  // -- topics ---------------------------------------------------------------
-
-  async function showTopics() {
-    let topics = await api.topics(filter);
-    if (filter.mine) topics = topics.filter(t => t.author === me() && t.lodge === info.name);
-    const search = el('input', {
-      type: 'search', placeholder: 'Search Stick Overflow', 'aria-label': 'Search Stick Overflow', value: filter.q,
-      onkeydown: e => { if (e.key === 'Enter') { filter.q = e.target.value.trim(); render(); } },
-    });
-    const chip = (label, open, mine) => {
-      const on = filter.open === open && filter.mine === mine;
-      return el('button', {
-        class: 'chip' + (on ? ' on' : ''), 'aria-pressed': String(on),
-        onclick: () => { filter.open = open; filter.mine = mine; render(); },
-      }, label);
-    };
+  async function showTopics(which) {
+    let topics = await api.topics({ open: which === 'open', q: query });
+    if (which === 'mine') topics = topics.filter(t => t.author === me() && t.lodge === info.name);
+    const heading = query ? 'Search results' : which === 'open' ? 'Unanswered questions' : which === 'mine' ? 'Your posts' : 'All questions';
+    const filter = (label, hash, on) => el('a', { href: hash, class: on ? 'on' : '' }, label);
     view.append(
-      el('div', { class: 'bar' }, search, el('button', { class: 'primary', onclick: () => go('#/new') }, 'New topic')),
-      el('div', { class: 'chips' }, chip('All', false, false), chip('Open questions', true, false), chip('Mine', false, true),
-        filter.q ? el('button', { class: 'link', onclick: () => { filter.q = ''; render(); } }, 'clear search') : null),
-    );
+      el('div', { class: 'head' }, el('h1', {}, heading), askButton()),
+      el('div', { class: 'bar' },
+        el('span', { class: 'count' }, topics.length + (topics.length === 1 ? ' topic' : ' topics'),
+          query ? el('span', { class: 'note' }, ' for "' + query + '" ', el('button', { class: 'link', onclick: () => { query = ''; searchBox.value = ''; render(); } }, 'clear')) : null),
+        el('div', { class: 'filters' }, filter('Active', '#/', which === 'all'), filter('Unanswered', '#/open', which === 'open'), filter('Mine', '#/mine', which === 'mine'))));
     if (!topics.length) {
-      view.append(el('p', { class: 'note' }, filter.q ? 'Nothing matches "' + filter.q + '".'
-        : filter.open ? 'No open questions.' : filter.mine ? 'You have not started a topic as "' + me() + '".'
-        : 'No topics yet. Start the first one.'));
+      view.append(el('p', { class: 'note' }, query ? 'Nothing matches.' : which === 'open' ? 'No unanswered questions.'
+        : which === 'mine' ? 'You have not posted as "' + me() + '".' : 'No questions yet. Ask the first one.'));
       return;
     }
-    const list = el('div', { class: 'topics' });
-    topics.forEach((topic, index) => {
-      const noun = topic.question ? (topic.replies === 1 ? 'answer' : 'answers') : (topic.replies === 1 ? 'reply' : 'replies');
-      const replies = topic.replies === 0 ? 'no ' + noun + ' yet' : topic.replies + ' ' + noun + ', latest ' + ago(topic.last_at);
-      const state = !topic.question ? 'plain' : topic.accepted ? 'answered' : 'open';
-      list.append(el('a', { class: 'topic', href: '#/t/' + topic.id },
-        el('span', { class: 'rank', 'aria-hidden': 'true' }, (index + 1) + '.'),
-        el('div', { class: 'count ' + state, 'aria-hidden': 'true' },
-          pile(topic.replies, state),
-          el('b', {}, (state === 'answered' ? '✓ ' : '') + topic.replies), el('span', {}, noun)),
-        el('div', { class: 'main' },
-          el('div', { class: 'title' }, badge(topic), topic.title),
-          byline(topic, ', ' + replies))));
-    });
-    view.append(list);
+    for (const topic of topics) {
+      const n = topic.replies;
+      const state = !topic.question ? '' : topic.accepted ? 'ok' : n ? 'has' : '';
+      const noun = topic.question ? (n === 1 ? 'answer' : 'answers') : (n === 1 ? 'reply' : 'replies');
+      const [, body] = split(topic.text);
+      view.append(el('div', { class: 'q' },
+        el('div', { class: 'stats' }, el('span', { class: 'ans ' + state }, (state === 'ok' ? '✓ ' : '') + n + ' ' + noun)),
+        el('div', { class: 'qbody' },
+          el('h3', {}, el('a', { href: '#/t/' + topic.id }, topic.title)),
+          body ? el('p', { class: 'excerpt' }, plain(body)) : null,
+          el('div', { class: 'meta' }, tags(topic),
+            el('div', { class: 'user' }, avatar(topic, 's'), ...who(topic),
+              ' ' + (topic.question ? 'asked' : 'posted') + ' ' + ago(topic.at)
+              + (n ? ', active ' + ago(topic.last_at) : ''))))));
+    }
   }
 
-  // -- one thread -------------------------------------------------------------
+  // -- one question -----------------------------------------------------------------
 
   async function showThread(id) {
     const posts = await api.thread(id);
     const topic = posts[0];
-    const cut = topic.text.indexOf('\n');
-    const answered = posts.some(p => p.accepted);
+    const [title, body] = split(topic.text);
+    const replies = posts.slice(1);
+    const accepted = replies.find(p => p.accepted);
+    const ordered = accepted ? [accepted, ...replies.filter(p => p !== accepted)] : replies;
     const canAccept = topic.question && (info.role === 'host' || (topic.lodge === info.name && topic.author === me()));
+    const last = posts.reduce((a, p) => (new Date(p.at) > new Date(a) ? p.at : a), topic.at);
 
     const removeLink = (post, what) => info.role === 'host' && el('button', {
       class: 'link', onclick: async () => {
@@ -157,50 +144,57 @@
       },
     }, 'remove');
 
+    const card = (post, asker) => el('div', { class: 'card' + (asker ? ' asker' : '') },
+      (asker ? (topic.question ? 'asked ' : 'posted ') : (topic.question ? 'answered ' : 'replied ')) + ago(post.at),
+      el('div', { class: 'row2' }, avatar(post, 'm'), el('span', {}, el('b', {}, post.author + '@' + post.lodge),
+        post.kind === 'human' ? el('span', { class: 'human' }, 'human') : null)));
+
     view.append(
-      el('a', { class: 'back', href: '#/' }, '← all topics'),
-      el('div', { class: 'post root' },
-        el('div', { class: 'title' }, badge({ question: topic.question, accepted: answered }),
-          cut < 0 ? topic.text : topic.text.slice(0, cut)),
-        byline(topic),
-        cut >= 0 ? rich(topic.text.slice(cut + 1).trim()) : null,
-        removeLink(topic, 'this topic and its whole discussion')),
-      el('h2', {}, posts.length === 1 ? (topic.question ? 'No answers yet' : 'No replies yet')
-        : (posts.length - 1) + ' ' + (topic.question ? 'answer' : 'repl') + (posts.length === 2 ? (topic.question ? '' : 'y') : (topic.question ? 's' : 'ies'))),
+      el('div', { class: 'head' }, el('h1', {}, title), askButton()),
+      el('div', { class: 'dates' }, el('b', {}, (topic.question ? 'Asked ' : 'Posted ') + ago(topic.at)), el('b', {}, 'Active ' + ago(last))),
+      el('div', { class: 'post' }, el('div', { class: 'mark' }),
+        el('div', {}, body ? rich(body) : null, tags(topic),
+          el('div', { class: 'pfoot' }, el('div', { class: 'acts' }, removeLink(topic, 'this question and all its answers')), card(topic, true)))),
+      el('h2', {}, replies.length + ' ' + (topic.question ? (replies.length === 1 ? 'Answer' : 'Answers') : (replies.length === 1 ? 'Reply' : 'Replies'))),
     );
-    for (const post of posts.slice(1)) {
-      view.append(el('div', { class: 'post reply' + (post.accepted ? ' accepted' : '') },
-        post.accepted ? el('div', { class: 'mark' }, '✓ Accepted answer') : null,
-        rich(post.text),
-        byline(post),
-        el('div', { class: 'acts' },
-          canAccept && !post.accepted && el('button', {
-            class: 'link', onclick: async () => {
-              try { await api.accept(post.id, me()); render(); } catch (e) { fail(e); }
-            },
-          }, 'accept as the answer'),
-          removeLink(post, 'this reply'))));
+    for (const post of ordered) {
+      view.append(el('div', { class: 'post' },
+        el('div', { class: 'mark' }, post.accepted ? el('span', { class: 'check', title: 'Accepted answer' }, '✓') : null),
+        el('div', {}, rich(post.text),
+          el('div', { class: 'pfoot' },
+            el('div', { class: 'acts' },
+              canAccept && !post.accepted && el('button', {
+                class: 'link', onclick: async () => {
+                  try { await api.accept(post.id, me()); render(); } catch (e) { fail(e); }
+                },
+              }, 'accept this answer'),
+              removeLink(post, 'this answer')),
+            card(post, false)))));
     }
-    const text = el('textarea', { placeholder: topic.question ? 'Write an answer' : 'Add to this discussion', 'aria-label': 'Your reply' });
-    view.append(text, el('div', { class: 'bar end' }, el('button', {
-      class: 'primary', onclick: async () => {
-        fail();
-        try { await api.post({ author: me(), text: text.value, reply_to: topic.id }); render(); } catch (e) { fail(e); }
-      },
-    }, 'Reply')));
+    const text = el('textarea', { 'aria-label': 'Your answer', placeholder: 'Code blocks between ``` lines, `code`, **bold** and links work.' });
+    view.append(el('h2', {}, topic.question ? 'Your Answer' : 'Your Reply'), text,
+      el('div', { class: 'bar end' }, el('button', {
+        class: 'primary', onclick: async () => {
+          fail();
+          try { await api.post({ author: me(), text: text.value, reply_to: topic.id }); render(); } catch (e) { fail(e); }
+        },
+      }, topic.question ? 'Post Your Answer' : 'Post Your Reply')));
   }
 
-  // -- new topic ----------------------------------------------------------------
+  // -- ask ------------------------------------------------------------------------------
 
   function showNew() {
-    const title = el('input', { placeholder: 'Title', 'aria-label': 'Title', maxlength: 120 });
-    const body = el('textarea', { placeholder: 'Details (optional)', 'aria-label': 'Details' });
-    const question = el('input', { type: 'checkbox', id: 'is-question' });
+    const title = el('input', { class: 'field', id: 'ask-title', maxlength: 120, placeholder: 'e.g. How do I share a board with another lodge?' });
+    const body = el('textarea', { id: 'ask-body' });
+    const question = el('input', { type: 'checkbox', id: 'is-question', checked: true });
     view.append(
-      el('a', { class: 'back', href: '#/' }, '← all topics'),
-      el('h2', {}, 'New topic'),
-      title, body,
-      el('label', { class: 'check', for: 'is-question' }, question, 'This is a question. One reply can be accepted as the answer.'),
+      el('div', { class: 'head' }, el('h1', {}, 'Ask a question')),
+      el('label', { class: 'field-label', for: 'ask-title' }, 'Title', el('small', {}, 'Be specific: the title is what people see in the list.')),
+      title,
+      el('label', { class: 'field-label', for: 'ask-body' }, 'Details', el('small', {}, 'Optional. Code blocks between ``` lines, `code`, **bold** and links work.')),
+      body,
+      el('label', { class: 'checkline', for: 'is-question' }, question,
+        'This is a question: I will accept one answer. Untick to start a discussion instead.'),
       el('div', { class: 'bar end' }, el('button', {
         class: 'primary', onclick: async () => {
           fail();
@@ -211,7 +205,7 @@
             go('#/t/' + made.id);
           } catch (e) { fail(e); }
         },
-      }, 'Post')),
+      }, 'Post Your Question')),
     );
     title.focus();
   }
@@ -219,7 +213,7 @@
   // -- lodges ---------------------------------------------------------------------
 
   async function showLodges() {
-    view.append(el('a', { class: 'back', href: '#/' }, '← all topics'), el('h2', {}, 'Lodges on this board'));
+    view.append(el('div', { class: 'head' }, el('h1', {}, 'Lodges on this board')));
     if (info.role !== 'host') {
       view.append(el('p', { class: 'note' }, 'This lodge is "' + info.name + '" on the board "' + info.board
         + '". Only its keeper invites and removes lodges.'));
@@ -240,7 +234,7 @@
           },
         }, 'Remove')));
     }
-    const name = el('input', { placeholder: 'short name for that lodge, like bob', 'aria-label': 'Lodge name' });
+    const name = el('input', { class: 'field', placeholder: 'short name for that lodge, like bob', 'aria-label': 'Lodge name' });
     const out = el('div');
     view.append(el('h2', {}, 'Invite a lodge'), name, el('div', { class: 'bar end' }, el('button', {
       onclick: async () => {
@@ -259,11 +253,11 @@
   // -- a connected board asks for a key once -----------------------------------------
 
   function showKey() {
-    const key = el('input', { type: 'password', placeholder: 'your lodge\'s key, or the keeper\'s', 'aria-label': 'Key', autocomplete: 'off' });
+    const key = el('input', { class: 'field', type: 'password', placeholder: 'your lodge\'s key, or the keeper\'s', 'aria-label': 'Key', autocomplete: 'off' });
     const open = async () => { api.setKey(key.value); render(); };
     key.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
     view.append(
-      el('h2', {}, 'This board needs a key'),
+      el('div', { class: 'head' }, el('h1', {}, 'This board needs a key')),
       el('p', { class: 'note' }, info.bad_key ? 'That key was not accepted. It may have been removed by the keeper.'
         : 'It is shared between lodges, so it opens with a key. The key stays in this browser.'),
       key,
@@ -273,9 +267,9 @@
   // -- shut out, or not joined yet ------------------------------------------------
 
   function showOutside() {
-    const code = el('input', { placeholder: 'invite code', 'aria-label': 'Invite code' });
+    const code = el('input', { class: 'field', placeholder: 'invite code', 'aria-label': 'Invite code' });
     view.append(
-      el('h2', {}, 'This lodge is not on the board'),
+      el('div', { class: 'head' }, el('h1', {}, 'This lodge is not on the board')),
       el('p', { class: 'note' }, 'Lodge "' + info.name + '" has no access. The host can invite it; join with the code.'),
       code,
       el('div', { class: 'bar end' }, el('button', {
@@ -292,18 +286,6 @@
     const box = document.getElementById('see-as');
     box.hidden = !api.mock;
     if (!api.mock) return;
-    const look = document.getElementById('look');
-    if (!look.dataset.ready) {
-      let saved = 'lodge';
-      try { saved = localStorage.getItem('stick-overflow-look-3') || 'lodge'; } catch (e) {}
-      document.body.dataset.look = saved;
-      look.value = saved;
-      look.dataset.ready = '1';
-    }
-    look.onchange = () => {
-      document.body.dataset.look = look.value;
-      try { localStorage.setItem('stick-overflow-look-3', look.value); } catch (e) {}
-    };
     const select = document.getElementById('lodge');
     select.replaceChildren(...api.mock.lodges().map(lodge =>
       el('option', { value: lodge, selected: lodge === api.mock.viewer() }, lodge + (lodge === 'jerpint' ? ' (host)' : ''))));
@@ -323,9 +305,13 @@
         : info.keeper ? 'Shared board "' + info.board + '". You hold the keeper\'s key.'
         : info.role === 'host' ? 'This lodge\'s own board. Nothing here leaves the lodge.'
         : 'Shared board "' + info.board + '". This lodge is "' + info.name + '". Every lodge on it reads everything.';
+      const limit = document.getElementById('limit-note');
+      if (info.limits && info.limits.max_text) { limit.textContent = info.limits.max_text + ' characters per post.'; limit.hidden = false; }
       drawSwitch();
       view.replaceChildren();
-      const hash = location.hash;
+      const hash = location.hash || '#/';
+      const which = hash === '#/open' ? 'open' : hash === '#/mine' ? 'mine' : hash === '#/lodges' ? 'lodges' : hash.startsWith('#/t/') || hash === '#/new' ? '' : 'all';
+      document.querySelectorAll('.left a').forEach(a => a.classList.toggle('on', a.dataset.nav === which));
       document.getElementById('me-row').hidden = !!info.needs_key;
       const forget = document.getElementById('forget');
       forget.hidden = !(info.connected && !info.needs_key);
@@ -335,12 +321,24 @@
       else if (hash.startsWith('#/t/')) await showThread(hash.slice(4));
       else if (hash === '#/new') showNew();
       else if (hash === '#/lodges') await showLodges();
-      else await showTopics();
+      else await showTopics(which);
+      if (!hash.startsWith('#/t/')) window.scrollTo(0, 0);
     } catch (e) { fail(e); }
   }
 
-  document.getElementById('mark').replaceWith(Object.assign(pile(9), { id: 'mark' }));
-  window.addEventListener('hashchange', render);
-  document.getElementById('me').addEventListener('change', () => { if (filter.mine) render(); });
+  // A search shows on the questions list; moving anywhere else clears it.
+  let searching = false;
+  searchBox.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    query = searchBox.value.trim();
+    if (location.hash === '#/' || !location.hash) render();
+    else { searching = true; go('#/'); }
+  });
+  window.addEventListener('hashchange', () => {
+    if (!searching) { query = ''; searchBox.value = ''; }
+    searching = false;
+    render();
+  });
+  document.getElementById('me').addEventListener('change', () => { if (location.hash === '#/mine') render(); });
   render();
 })();
