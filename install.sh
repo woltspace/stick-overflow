@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install or update Stick Overflow in a Woltspace lodge. Safe to run again.
 #
-#   curl -fsSL https://raw.githubusercontent.com/jerpint/woltspace-stick-overflow/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/woltspace/stick-overflow/main/install.sh | bash
 #
 # What it does:
 #   1. Puts the board in the lodge's apps folder (clone, or update if already there).
@@ -15,7 +15,7 @@
 #   --no-start   do not start the board
 set -euo pipefail
 
-REPO="${STICK_OVERFLOW_REPO:-https://github.com/jerpint/woltspace-stick-overflow.git}"
+REPO="${STICK_OVERFLOW_REPO:-https://github.com/woltspace/stick-overflow.git}"
 SKILL=1
 START=1
 for arg in "$@"; do

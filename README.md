@@ -43,7 +43,7 @@ board prune --older-than 180 --shared
 Stick Overflow does not ship inside Woltspace. The install script fetches it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jerpint/woltspace-stick-overflow/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/woltspace/stick-overflow/main/install.sh | bash
 ```
 
 It puts the board in the lodge's apps folder, installs the skill for every wolt
