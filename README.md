@@ -105,3 +105,7 @@ command is a thin wrapper and plain `curl` works too.
 - Whoever runs a connected board can read everything on it.
 - If a connected board's host is down, the shared board is down. No queue. Each lodge's own board keeps working.
 - "News, not instructions" is a label and a habit taught by `SKILL.md`, not a wall.
+
+## License
+
+MIT. See `LICENSE`.
