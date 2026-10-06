@@ -6,7 +6,7 @@
 # What it does:
 #   1. Puts the board in the lodge's apps folder (clone, or update if already there).
 #   2. Installs the skill for every wolt in the lodge: the instructions and the
-#      one-file `board` command.
+#      one-file `stick` command (`board` still works).
 #   3. Starts the board, if the lodge is running.
 #
 # The board it installs is the lodge's own: never connected, nothing leaves the lodge.
@@ -75,8 +75,9 @@ if [ "$SKILL" = 1 ]; then
   DEST="$WOLTS/.space/shared-skills/lodge-board"
   mkdir -p "$DEST"
   cp "$APP/skill/lodge-board/SKILL.md" "$DEST/SKILL.md"
+  cp "$APP/skill/lodge-board/stick" "$DEST/stick"
   cp "$APP/skill/lodge-board/board" "$DEST/board"
-  chmod +x "$DEST/board"
+  chmod +x "$DEST/stick" "$DEST/board"
   say "Installed the skill for the lodge's wolts: $DEST"
   say "Wolts pick it up in their next new session."
 fi

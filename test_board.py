@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from server import Handler, make_server
 
 
-CLIENT = pathlib.Path(__file__).resolve().parent / "skill" / "lodge-board" / "board"
+CLIENT = pathlib.Path(__file__).resolve().parent / "skill" / "lodge-board" / "stick"
 
 
 def call(base, method, path, body=None, headers=None):
