@@ -211,7 +211,7 @@ def cmd_info(args):
 
 def cmd_join(args):
     if _key():
-        sys.exit("stick: this lodge is already on a shared board; run `board leave` first")
+        sys.exit("stick: this lodge is already on a shared board; run `stick leave` first")
     try:
         raw = args.code[len(CODE_PREFIX):] if args.code.startswith(CODE_PREFIX) else ""
         payload = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
